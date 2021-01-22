@@ -209,42 +209,54 @@ void renderWalls() {
     int h = y2 - y1;
     //drawLine(x,y1,x,y2);
     //ab.drawFastVLine(x, y1, h);
-    drawVLineToBuffer(x, y1, h);
+    DrawVLine(x, y1, y1+h, 0xff);
   }
 }
 
-void drawVLineToBuffer(int16_t x, int16_t y, uint8_t h) {
-  if (x < 0 || x > WIDTH - 1 || y < 0 || y > HEIGHT - 1)
-    return;
+// Adpated from https://github.com/a1k0n/arduboy3d/blob/master/draw.cpp
+// since the AVR has no barrel shifter, we'll do a progmem lookup
+const uint8_t topmask_[] PROGMEM = {
+  0xff, 0xfe, 0xfc, 0xf8, 0xf0, 0xe0, 0xc0, 0x80
+};
+const uint8_t bottommask_[] PROGMEM = {
+  0x01, 0x03, 0x07, 0x0f, 0x1f, 0x3f, 0x7f, 0xff
+};
 
-  int8_t yOffset = y & 7;
-  int8_t sRow = y / 8;
-  int8_t rows = h / 8;
-  
-  if (yOffset > 4) {
-    rows++;
+void DrawVLine(uint8_t x, int8_t y0_, int8_t y1_, uint8_t pattern)
+{
+  uint8_t *screenptr = arduboy.getBuffer() + x;
+
+  if (y1_ < y0_ || y1_ < 0 || y0_ > 63) return;
+
+  // clip (FIXME; clipping should be handled elsewhere)
+  // cast to unsigned after clipping to simplify generated code below
+  uint8_t y0 = y0_, y1 = y1_;
+  if (y0_ < 0) y0 = 0;
+  if (y1_ > 63) y1 = 63;
+
+  uint8_t *page0 = screenptr + ((y0 & 0x38) << 4);
+  uint8_t *page1 = screenptr + ((y1 & 0x38) << 4);
+  if (page0 == page1)
+  {
+    uint8_t mask = pgm_read_byte(topmask_ + (y0 & 7))
+                   & pgm_read_byte(bottommask_ + (y1 & 7));
+    *page0 &= ~mask;
+    *page0 |= pattern & mask;  // fill y0..y1 in same page in one shot
   }
-
-  uint8_t mask = 0xFF;
-  uint8_t *ptr = ab.getBuffer();
-  for (int a = 0; a < rows; a++) {
-    int bRow = sRow + a;
-    //if (bRow < 4) mask = 0x55;
-    if (bRow > (HEIGHT / 8) - 1) break;
-    if (bRow >= 0) {
-      if (a == 0) {
-        ptr[(bRow * WIDTH) + x] |= mask << yOffset;
-        if (rows == 1) {
-          ptr[(bRow * WIDTH) + x] |= mask;
-        }
-      }
-      if (a > 0 && a < rows - 1) {
-        ptr[(bRow * WIDTH) + x] |= mask;
-      }
-      if (a == rows - 1) {
-        ptr[(bRow * WIDTH) + x] |= mask >> 8 - ((h - (8 - yOffset)) % 8);
-      }
+  else
+  {
+    uint8_t mask = pgm_read_byte(topmask_ + (y0 & 7));
+    *page0 &= ~mask;
+    *page0 |= pattern & mask;  // write top 1..8 pixels
+    page0 += 128;
+    while (page0 != page1)
+    {
+      *page0 = pattern;  // fill middle 8 pixels at a time
+      page0 += 128;
     }
+    mask = pgm_read_byte(bottommask_ + (y1 & 7));  // and bottom 1..8 pixels
+    *page0 &= ~mask;
+    *page0 |= pattern & mask;
   }
 }
 
